@@ -2,7 +2,9 @@
 
 Private iOS and Android companion for [Locus on macOS](https://github.com/nahid-sparktales/locus).
 
-![Locus Mobile pairing in dark mode](docs/locus-mobile-pairing-dark.png)
+<p align="center">
+  <a href="docs/locus-mobile-pairing-dark.png"><img src="docs/locus-mobile-pairing-dark.png" alt="Locus Mobile pairing in dark mode" width="260"></a>
+</p>
 
 Locus Mobile pairs directly with your Mac over the local network. A user-managed
 Tailscale address can be saved for access away from home without a Locus account,
