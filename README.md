@@ -15,7 +15,7 @@ Keystore.
 ## Capabilities
 
 - View, create, and continue durable chats in saved Mac workspaces
-- Choose Ask, Work, Plan, or Build mode for new mobile chats
+- Choose Ask, Work, Plan, or GSD mode for new mobile chats
 - Follow streaming responses and running activity
 - Stop runs and answer one-time permission or plan approvals
 - View schedules, run them now, and pause or resume them
