@@ -679,8 +679,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                                 child: Text('Plan'),
                               ),
                               DropdownMenuItem(
-                                value: 'build',
-                                child: Text('GSD'),
+                                value: 'grill',
+                                child: Text('Grill'),
                               ),
                             ],
                             onChanged: (value) =>
@@ -1205,7 +1205,7 @@ class _NewChatSheetState extends State<_NewChatSheet> {
               DropdownMenuItem(value: 'ask', child: Text('Ask')),
               DropdownMenuItem(value: 'work', child: Text('Work')),
               DropdownMenuItem(value: 'plan', child: Text('Plan')),
-              DropdownMenuItem(value: 'build', child: Text('GSD')),
+              DropdownMenuItem(value: 'grill', child: Text('Grill')),
             ],
             onChanged: (value) => setState(() => mode = value ?? mode),
           ),
