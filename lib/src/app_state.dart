@@ -35,6 +35,56 @@ class LocusAppState extends ChangeNotifier {
   List<Map<String, dynamic>> activity = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> schedules = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> approvals = <Map<String, dynamic>>[];
+  // Question drafts outlive cards, task navigation and server deadlines.
+  final Map<String, Map<String, dynamic>> questionDrafts = {};
+  final Map<String, Map<String, dynamic>> _submittedQuestionDrafts = {};
+
+  static String questionKey(Map<String, dynamic> request, String questionId) =>
+      '${request['chat_id']}/${request['request_id']}/$questionId';
+
+  void applyApprovals(List<Map<String, dynamic>> incoming) {
+    for (final request in incoming.where(
+      (item) => item['kind'] == 'optional_question',
+    )) {
+      for (final question
+          in (request['questions'] as List? ?? []).whereType<Map>()) {
+        final key = questionKey(request, question['id'] as String? ?? '');
+        final sent = _submittedQuestionDrafts[key];
+        final answer = question['answer'];
+        if (answer is Map && sent != null && answer['source'] == 'user') {
+          final selected = List<String>.from(
+            answer['selected_option_ids'] as List? ?? [],
+          )..sort();
+          final sentSelected = List<String>.from(
+            sent['selected'] as List? ?? [],
+          )..sort();
+          if (mapEquals(questionDrafts[key], sent) &&
+              listEquals(selected, sentSelected) &&
+              (answer['text'] ?? '') == (sent['text'] ?? '')) {
+            questionDrafts.remove(key);
+          }
+          _submittedQuestionDrafts.remove(key);
+        }
+      }
+    }
+    final retained = approvals
+        .where(
+          (old) =>
+              old['kind'] == 'optional_question' &&
+              !incoming.any(
+                (value) =>
+                    value['request_id'] == old['request_id'] &&
+                    value['chat_id'] == old['chat_id'],
+              ) &&
+              questionDrafts.keys.any(
+                (key) =>
+                    key.startsWith('${old['chat_id']}/${old['request_id']}/'),
+              ),
+        )
+        .map((old) => <String, dynamic>{...old, 'status': 'finished'});
+    approvals = [...incoming, ...retained];
+  }
+
   Map<String, dynamic>? selectedChat;
   Map<String, String> streamingText = <String, String>{};
 
@@ -120,7 +170,7 @@ class LocusAppState extends ChangeNotifier {
     chats = _mapList(results[1]);
     activity = _mapList(results[2]);
     schedules = _mapList(results[3]);
-    approvals = _mapList(status['approvals']);
+    applyApprovals(_mapList(status['approvals']));
     if (approvals.isEmpty) approvals = _deriveApprovals(activity);
     await _persistCache();
     notifyListeners();
@@ -195,13 +245,27 @@ class LocusAppState extends ChangeNotifier {
 
   Future<void> respondToApproval(
     Map<String, dynamic> approval,
-    String decision,
-  ) async {
+    String decision, {
+    Map<String, dynamic> fields = const {},
+  }) async {
     _requireOnline();
+    if (approval['kind'] == 'optional_question' && decision == 'answer') {
+      for (final answer
+          in (fields['answers'] as List? ?? []).whereType<Map>()) {
+        final key = questionKey(approval, answer['id'] as String? ?? '');
+        final draft = questionDrafts[key];
+        if (draft != null) _submittedQuestionDrafts[key] = Map.of(draft);
+      }
+    }
     await _client.request(
       'approval.respond',
-      payload: <String, dynamic>{...approval, 'decision': decision},
+      payload: <String, dynamic>{...approval, ...fields, 'decision': decision},
     );
+    if (approval['kind'] == 'optional_question') {
+      // A submitted message still needs the agent's acknowledgement. Keep
+      // the card and draft until a server snapshot includes its answer.
+      return;
+    }
     approvals.removeWhere(
       (candidate) =>
           candidate['kind'] == approval['kind'] &&
@@ -328,7 +392,7 @@ class LocusAppState extends ChangeNotifier {
       case 'schedule.updated':
         schedules = _mapList(data);
       case 'approval.required':
-        approvals = _mapList(data);
+        applyApprovals(_mapList(data));
     }
     unawaited(_persistCache());
     notifyListeners();
@@ -336,7 +400,22 @@ class LocusAppState extends ChangeNotifier {
 
   Future<void> _refreshActivity() async {
     activity = _mapList(await _client.request('activity.list'));
-    approvals = _deriveApprovals(activity);
+    final questionCards = approvals
+        .where(
+          (value) =>
+              value['kind'] == 'optional_question' ||
+              value['kind'] == 'question' ||
+              value['kind'] == 'blocking_question',
+        )
+        .toList();
+    final derived = _deriveApprovals(activity).where(
+      (value) => !questionCards.any(
+        (question) =>
+            question['kind'] == 'blocking_question' &&
+            question['chat_id'] == value['chat_id'],
+      ),
+    );
+    approvals = [...derived, ...questionCards];
     notifyListeners();
   }
 

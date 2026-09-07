@@ -6,6 +6,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'app_state.dart';
 import 'protocol.dart';
+import 'optional_question_card.dart';
 
 class PairingScreen extends StatefulWidget {
   const PairingScreen({required this.state, super.key});
@@ -895,6 +896,23 @@ class _ApprovalCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (approval['kind'] == 'optional_question') {
+      return OptionalQuestionCard(
+        key: ValueKey('${approval['chat_id']}/${approval['request_id']}'),
+        state: state,
+        request: approval,
+      );
+    }
+    if (approval['kind'] == 'question' ||
+        approval['kind'] == 'blocking_question') {
+      return _RequiredQuestionCard(
+        key: ValueKey(
+          '${approval['kind']}/${approval['chat_id']}/${approval['request_id']}',
+        ),
+        state: state,
+        request: approval,
+      );
+    }
     final permission = approval['kind'] == 'permission';
     return Card(
       child: Padding(
@@ -939,6 +957,164 @@ class _ApprovalCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _RequiredQuestionCard extends StatefulWidget {
+  const _RequiredQuestionCard({
+    required this.state,
+    required this.request,
+    super.key,
+  });
+  final LocusAppState state;
+  final Map<String, dynamic> request;
+
+  @override
+  State<_RequiredQuestionCard> createState() => _RequiredQuestionCardState();
+}
+
+class _RequiredQuestionCardState extends State<_RequiredQuestionCard> {
+  final answers = <String, Map<String, dynamic>>{};
+  String? error;
+  bool sending = false;
+  bool get structured => widget.request['kind'] == 'blocking_question';
+  List<Map> get questions => structured
+      ? (widget.request['questions'] as List? ?? []).whereType<Map>().toList()
+      : [
+          {
+            'id': 'q1',
+            'question': widget.request['detail'],
+            'options': (widget.request['decisions'] as List? ?? [])
+                .whereType<String>()
+                .where((value) => value != 'answer' && value != 'dismiss')
+                .map((value) => {'label': value})
+                .toList(),
+          },
+        ];
+
+  Future<void> respond(bool skip) async {
+    setState(() {
+      sending = true;
+      error = null;
+    });
+    try {
+      if (structured) {
+        await widget.state.respondToApproval(
+          widget.request,
+          skip ? 'skip' : 'answer',
+          fields: {
+            'answers': skip
+                ? <Map<String, dynamic>>[]
+                : questions
+                      .map(
+                        (q) => <String, dynamic>{
+                          'id': q['id'],
+                          'selected': <String>[],
+                          'text': '',
+                          ...?answers[q['id']],
+                        },
+                      )
+                      .toList(),
+          },
+        );
+      } else {
+        final answer = answers['q1'] ?? {};
+        final selected = answer['selected'] as List? ?? [];
+        await widget.state.respondToApproval(
+          widget.request,
+          skip ? 'dismiss' : selected.firstOrNull as String? ?? 'answer',
+          fields: {'text': answer['text'] ?? ''},
+        );
+      }
+    } on Object catch (failure) {
+      if (mounted) {
+        setState(() {
+          error = failure.toString();
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          sending = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            structured ? 'Required question' : 'Question',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const Text('The agent is waiting. Skip returns no answer.'),
+          for (final question in questions) ...[
+            Text(question['question'] as String? ?? ''),
+            for (final option
+                in (question['options'] as List? ?? []).whereType<Map>())
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(option['label'] as String? ?? ''),
+                value: (answers[question['id']]?['selected'] as List? ?? [])
+                    .contains(option['label']),
+                onChanged: (checked) => setState(() {
+                  final id = question['id'] as String;
+                  final selected = List<String>.from(
+                    answers[id]?['selected'] as List? ?? [],
+                  );
+                  if (question['multi_select'] != true) selected.clear();
+                  if (checked == true) {
+                    selected.add(option['label'] as String);
+                  } else {
+                    selected.remove(option['label']);
+                  }
+                  answers[id] = {...?answers[id], 'selected': selected};
+                }),
+              ),
+            TextField(
+              decoration: const InputDecoration(labelText: 'Your answer'),
+              onChanged: (text) => setState(() {
+                final id = question['id'] as String;
+                answers[id] = {...?answers[id], 'text': text};
+              }),
+            ),
+          ],
+          if (error != null) Text(error!),
+          Row(
+            children: [
+              FilledButton(
+                onPressed:
+                    widget.state.online &&
+                        !sending &&
+                        questions.every(
+                          (q) =>
+                              (answers[q['id']]?['selected'] as List? ?? [])
+                                  .isNotEmpty ||
+                              (answers[q['id']]?['text'] as String? ?? '')
+                                  .trim()
+                                  .isNotEmpty,
+                        )
+                    ? () => respond(false)
+                    : null,
+                child: const Text('Answer'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                onPressed: widget.state.online && !sending
+                    ? () => respond(true)
+                    : null,
+                child: const Text('Skip'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _RunCard extends StatelessWidget {
