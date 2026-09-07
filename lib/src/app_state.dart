@@ -25,6 +25,7 @@ class LocusAppState extends ChangeNotifier {
   int _reconnectAttempt = 0;
   MacCredentials? _credentials;
   String? _selectedChatId;
+  int _chatRequestGeneration = 0;
 
   bool initialized = false;
   bool connecting = false;
@@ -172,6 +173,33 @@ class LocusAppState extends ChangeNotifier {
     schedules = _mapList(results[3]);
     applyApprovals(_mapList(status['approvals']));
     if (approvals.isEmpty) approvals = _deriveApprovals(activity);
+    // A task may finish while this device is disconnected. Reload the selected
+    // transcript, whose content includes the authoritative complete fallback.
+    final selected = _selectedChatId;
+    if (selected != null) {
+      try {
+        await openChat(selected);
+        final selectedState = chats
+            .where((chat) => chat['id'] == selected)
+            .firstOrNull?['state'];
+        if (const <String>{
+          'idle',
+          'completed',
+          'failed',
+          'interrupted',
+          'cancelled',
+          'discarded',
+        }.contains(selectedState)) {
+          streamingText.remove(selected);
+        }
+      } on LocusProtocolException catch (error) {
+        if (error.code != 'chat_not_found') rethrow;
+        // Deleting the selected task while offline must not make a successful
+        // reconnection fail or leave an obsolete transcript on screen.
+        if (_selectedChatId == selected) closeChat();
+        streamingText.remove(selected);
+      }
+    }
     await _persistCache();
     notifyListeners();
   }
@@ -179,16 +207,25 @@ class LocusAppState extends ChangeNotifier {
   Future<void> openChat(String chatId) async {
     _requireOnline();
     _selectedChatId = chatId;
-    selectedChat = _map(
+    final requestGeneration = ++_chatRequestGeneration;
+    final snapshot = _map(
       await _client.request(
         'chat.get',
         payload: <String, dynamic>{'chat_id': chatId},
       ),
     );
+    // A slow response must not overwrite a newer selection or refresh, even
+    // when both requests are for the same chat.
+    if (_selectedChatId != chatId ||
+        requestGeneration != _chatRequestGeneration) {
+      return;
+    }
+    selectedChat = snapshot;
     notifyListeners();
   }
 
   void closeChat() {
+    _chatRequestGeneration += 1;
     _selectedChatId = null;
     selectedChat = null;
   }
